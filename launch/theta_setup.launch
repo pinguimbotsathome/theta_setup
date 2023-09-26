@@ -1,0 +1,9 @@
+<launch>
+	<node 
+		name="esp_node"        pkg="rosserial_python"      type="serial_node.py" output = "screen">
+		<param name="port"              type="string"               value="/dev/ttyUSB0"/>
+		<param name="baud"              type="int"                  value="115200"/>
+   	</node>
+
+	<node name = "initial_cmd_vel" pkg="theta_setup" type="theta_setup.py"/>
+</launch>
