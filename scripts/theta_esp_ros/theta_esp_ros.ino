@@ -1,17 +1,3 @@
-/*
-  Theta Locomotion Control Algorithm (ESP)
-  Developed by Felipe Machado and Mateus Santos da Silva
-  Last modification: 19/09/2023
-  Version: 0.5
-
-- usable to read speed from hall efect sensor (speedLeftWheel and speedRightWheel)
-- control joystick by typing the bits values (writeJoystickManually)
-- control joystick by PI controler (controle_vel_linear)
-
-TODO:
-[ ] refactor
-*/
-
 #include <ros.h>
 #include <geometry_msgs/Twist.h>
 #include <tf/transform_broadcaster.h>
@@ -93,11 +79,66 @@ void IRAM_ATTR leftMotorISR(Hall* hall) {
 void ros_receiver(const geometry_msgs::Twist& cmd_vel) {
   float ros_linear = cmd_vel.linear.x;
   float ros_ang = cmd_vel.angular.z;
+
   robotVelocity2joystick(ros_linear, ros_ang);
 }
 
 ros::Subscriber<geometry_msgs::Twist> sub("/cmd_vel", ros_receiver);
 
+const unsigned long interval = 100;  // 100 = 100ms = 100Hz
+unsigned long previousMillis;
+
+void setup() {
+  Serial.begin(115200);
+
+  //ros setup:
+  nh.getHardware()->setBaud(115200);
+  nh.initNode();
+  nh.subscribe(sub);
+  nh.advertise(odom_pub);
+
+  pinMode(Xchannel, OUTPUT);
+  pinMode(Ychannel, OUTPUT);
+
+  pinMode(ARightHall.pin, INPUT);
+  pinMode(BRightHall.pin, INPUT);
+  pinMode(ALeftHall.pin, INPUT);
+  pinMode(BLeftHall.pin, INPUT);
+
+  attachInterrupt(
+    digitalPinToInterrupt(ARightHall.pin), [] {
+      rightMotorISR(&ARightHall);
+    },
+    FALLING);
+  attachInterrupt(
+    digitalPinToInterrupt(BRightHall.pin), [] {
+      rightMotorISR(&BRightHall);
+    },
+    FALLING);
+
+  attachInterrupt(
+    digitalPinToInterrupt(ALeftHall.pin), [] {
+      leftMotorISR(&ALeftHall);
+    },
+    FALLING);
+  attachInterrupt(
+    digitalPinToInterrupt(BLeftHall.pin), [] {
+      leftMotorISR(&BLeftHall);
+    },
+    FALLING);
+
+  dacWrite(Xchannel, 130);
+  dacWrite(Ychannel, 130);
+
+  current_time = nh.now();
+  last_time = nh.now();
+
+  wheel leftWheel = speedLeftWheel(&ALeftHall, &BLeftHall);
+  float leftWheel_filtered = filterLeft(leftWheel.velLinear);
+
+  wheel rightWheel = speedRightWheel(&ARightHall, &BRightHall);
+  float rightWheel_filtered = filterRight(rightWheel.velLinear);
+}
 
 void loop() {
 
@@ -110,13 +151,16 @@ void loop() {
   robot theta = wheelsVelocity2robotVelocity(leftWheel_filtered, rightWheel_filtered);
 
   // robotVelocity2joystick(contrVelLin, contrVelAng);
+  unsigned long currentMillis = millis();
+  if (currentMillis - previousMillis >= interval) {
+    previousMillis = currentMillis;
+    ros_sender(theta);
+  }
 
-  ros_sender(theta);
   nh.spinOnce();
   // writeJoystickManually();
   // Serial.println("- - - - - - - - - - - - - - - - - - - - - - - - - - - -");
 }
-
 
 
 void ros_sender(robot theta) {
@@ -174,7 +218,6 @@ void ros_sender(robot theta) {
   last_time = current_time;
 }
 
-
 robot wheelsVelocity2robotVelocity(float leftWheel_velLinear, float rightWheel_velLinear) {
   // https://www.roboticsbook.org/S52_diffdrive_actions.html
 
@@ -187,13 +230,27 @@ robot wheelsVelocity2robotVelocity(float leftWheel_velLinear, float rightWheel_v
   return localRobot;
 }
 
-
 void robotVelocity2joystick(float velLinear, float velAngular) {
   float velLinearMAX = 0.6;   // (m/s) going forward
   float velLinearMIN = -0.7;  // (m/s) going reverse
 
-  float velAngularMAX = 1.2;   //2.3   // (rad/s) 1 rad = 60°
-  float velAngularMIN = -1.0;  // -1.7
+  float velAngularMAX = 2.3;   //1.2   // (rad/s) 1 rad = 60°
+  float velAngularMIN = -1.7;  // -1.0
+
+  if (velLinear > velLinearMAX) {
+    velLinear = velLinearMAX;
+  }
+  if (velLinear < velLinearMIN) {
+    velLinear = velLinearMIN;
+  }
+  if (velAngular > velAngularMAX) {
+    velAngular = velAngularMAX;
+  }
+
+  if (velAngular > velAngularMIN) {
+    velAngular = velAngularMIN;
+  }
+
 
   Y_joy = 255 * (velLinear - velLinearMIN) / (velLinearMAX - velLinearMIN);
   X_joy = 255 * (velAngular - velAngularMIN) / (velAngularMAX - velAngularMIN);
@@ -281,10 +338,9 @@ wheel speedRightWheel(Hall* Ahall, Hall* Bhall) {
   return localWheel;
 }
 
-
 float filterLeft(float speed_measured) {  // iir filter aka EMA filter
                                           //https://blog.stratifylabs.dev/device/2013-10-04-An-Easy-to-Use-Digital-Filter/
-  static float alpha = 0.5;               // low number for a low pass filter
+  static float alpha = 0.0005;            //0.5            // low number for a low pass filter
   static float filteredValue = 0.0;
 
   if (filteredValue == 0.0) {
@@ -294,10 +350,9 @@ float filterLeft(float speed_measured) {  // iir filter aka EMA filter
   }
   return filteredValue;
 }
-
 
 float filterRight(float speed_measured) {
-  static float alpha = 0.5;
+  static float alpha = 0.0005;
   static float filteredValue = 0.0;
 
   if (filteredValue == 0.0) {
@@ -306,56 +361,4 @@ float filterRight(float speed_measured) {
     filteredValue = alpha * speed_measured + (1 - alpha) * filteredValue;
   }
   return filteredValue;
-}
-
-void setup() {
-  Serial.begin(115200);
-
-  //ros setup:
-  nh.getHardware()->setBaud(115200);
-  nh.initNode();
-  nh.subscribe(sub);
-  nh.advertise(odom_pub);
-
-  pinMode(Xchannel, OUTPUT);
-  pinMode(Ychannel, OUTPUT);
-
-  pinMode(ARightHall.pin, INPUT);
-  pinMode(BRightHall.pin, INPUT);
-  pinMode(ALeftHall.pin, INPUT);
-  pinMode(BLeftHall.pin, INPUT);
-
-  attachInterrupt(
-    digitalPinToInterrupt(ARightHall.pin), [] {
-      rightMotorISR(&ARightHall);
-    },
-    FALLING);
-  attachInterrupt(
-    digitalPinToInterrupt(BRightHall.pin), [] {
-      rightMotorISR(&BRightHall);
-    },
-    FALLING);
-
-  attachInterrupt(
-    digitalPinToInterrupt(ALeftHall.pin), [] {
-      leftMotorISR(&ALeftHall);
-    },
-    FALLING);
-  attachInterrupt(
-    digitalPinToInterrupt(BLeftHall.pin), [] {
-      leftMotorISR(&BLeftHall);
-    },
-    FALLING);
-
-  dacWrite(Xchannel, 130);
-  dacWrite(Ychannel, 130);
-
-  current_time = nh.now();
-  last_time = nh.now();
-
-  wheel leftWheel = speedLeftWheel(&ALeftHall, &BLeftHall);
-  float leftWheel_filtered = filterLeft(leftWheel.velLinear);
-
-  wheel rightWheel = speedRightWheel(&ARightHall, &BRightHall);
-  float rightWheel_filtered = filterRight(rightWheel.velLinear);
 }
