@@ -90,38 +90,28 @@ void IRAM_ATTR leftMotorISR(Hall* hall) {
   hall->endPulse = !hall->endPulse;
 }
 
-void ros_receiver(const geometry_msgs::Twist &cmd_vel){
+void ros_receiver(const geometry_msgs::Twist& cmd_vel) {
   float ros_linear = cmd_vel.linear.x;
   float ros_ang = cmd_vel.angular.z;
   robotVelocity2joystick(ros_linear, ros_ang);
-
 }
 
-ros::Subscriber <geometry_msgs::Twist> sub("/cmd_vel",ros_receiver);
+ros::Subscriber<geometry_msgs::Twist> sub("/cmd_vel", ros_receiver);
 
 
 void loop() {
 
-  // writeJoystickManually();
-  // Serial.println("- - - - - - - - - - - - - - - - - - - - - - - - - - - -");
-
-
   wheel leftWheel = speedLeftWheel(&ALeftHall, &BLeftHall);
   float leftWheel_filtered = filterLeft(leftWheel.velLinear);
-  // Serial.print("LEFT = " + String(leftWheel_filtered));
 
   wheel rightWheel = speedRightWheel(&ARightHall, &BRightHall);
   float rightWheel_filtered = filterRight(rightWheel.velLinear);
-  // Serial.println("  RIGHT = " + String(rightWheel_filtered));
 
   robot theta = wheelsVelocity2robotVelocity(leftWheel_filtered, rightWheel_filtered);
-  // Serial.print("vLIN = " + String(theta.velLinear));
-  // Serial.println("    vANG = " + String(theta.velAngular));
-  // Serial.println("- - - - - - - - - - - - - - - - - - - - - - - - - - - -");
 
-  
   // robotVelocity2joystick(contrVelLin, contrVelAng);
 
+  ros_sender(theta);
   nh.spinOnce();
   // writeJoystickManually();
   // Serial.println("- - - - - - - - - - - - - - - - - - - - - - - - - - - -");
@@ -129,27 +119,13 @@ void loop() {
 
 
 
-void ros_sender(robot theta)
-{
-
-
+void ros_sender(robot theta) {
   double vth = theta.velAngular;
   double vx = theta.velLinear;
-  // double x = 0.0;
-  // double y = 0.0;
-  // double th = 0.0;
 
-  // double vx = 0.1;
-  // double vy = -0.1;
-  // double vth = 0.1;
+  current_time = nh.now();
 
-  // ros::Time current_time, last_time;
-  // current_time = ros::Time::now();
-  // last_time = ros::Time::now();
- 
-  current_time = ros::Time::now();
-
-  //compute odometry in a typical way given the velocities of the robot
+  // //compute odometry in a typical way given the velocities of the robot
   double dt = (current_time - last_time).toSec();
   double delta_x = (vx * cos(th)) * dt;
   double delta_y = (vx * sin(th)) * dt;
@@ -159,22 +135,22 @@ void ros_sender(robot theta)
   y += delta_y;
   th += delta_th;
 
-  //since all odometry is 6DOF we'll need a quaternion created from yaw
+  // //since all odometry is 6DOF we'll need a quaternion created from yaw
   geometry_msgs::Quaternion odom_quat = tf::createQuaternionFromYaw(th);
 
-  //first, we'll publish the transform over tf
+  // //first, we'll publish the transform over tf
   geometry_msgs::TransformStamped odom_trans;
   odom_trans.header.stamp = current_time;
   odom_trans.header.frame_id = "odom";
-  odom_trans.child_frame_id = "base_link";
+  // odom_trans.child_frame_id = "base_link";
 
   odom_trans.transform.translation.x = x;
   odom_trans.transform.translation.y = y;
   odom_trans.transform.translation.z = 0.0;
   odom_trans.transform.rotation = odom_quat;
 
-  //send the transform
-  odom_broadcaster.sendTransform(odom_trans);
+  // //send the transform
+  // odom_broadcaster.sendTransform(odom_trans);
 
   //next, we'll publish the odometry message over ROS
   odom.header.stamp = current_time;
@@ -193,10 +169,9 @@ void ros_sender(robot theta)
 
   //publish the message
   odom_pub.publish(&odom);
+  // nh.spinOnce();
 
   last_time = current_time;
-
-  
 }
 
 
@@ -217,8 +192,8 @@ void robotVelocity2joystick(float velLinear, float velAngular) {
   float velLinearMAX = 0.6;   // (m/s) going forward
   float velLinearMIN = -0.7;  // (m/s) going reverse
 
-  float velAngularMAX = 2.3;  // (rad/s) 1 rad = 60°
-  float velAngularMIN = -1.7;
+  float velAngularMAX = 1.2;   //2.3   // (rad/s) 1 rad = 60°
+  float velAngularMIN = -1.0;  // -1.7
 
   Y_joy = 255 * (velLinear - velLinearMIN) / (velLinearMAX - velLinearMIN);
   X_joy = 255 * (velAngular - velAngularMIN) / (velAngularMAX - velAngularMIN);
@@ -309,7 +284,7 @@ wheel speedRightWheel(Hall* Ahall, Hall* Bhall) {
 
 float filterLeft(float speed_measured) {  // iir filter aka EMA filter
                                           //https://blog.stratifylabs.dev/device/2013-10-04-An-Easy-to-Use-Digital-Filter/
-  static float alpha = 0.001;             // low number for a low pass filter
+  static float alpha = 0.5;               // low number for a low pass filter
   static float filteredValue = 0.0;
 
   if (filteredValue == 0.0) {
@@ -322,7 +297,7 @@ float filterLeft(float speed_measured) {  // iir filter aka EMA filter
 
 
 float filterRight(float speed_measured) {
-  static float alpha = 0.001;
+  static float alpha = 0.5;
   static float filteredValue = 0.0;
 
   if (filteredValue == 0.0) {
@@ -377,5 +352,10 @@ void setup() {
 
   current_time = nh.now();
   last_time = nh.now();
-}
 
+  wheel leftWheel = speedLeftWheel(&ALeftHall, &BLeftHall);
+  float leftWheel_filtered = filterLeft(leftWheel.velLinear);
+
+  wheel rightWheel = speedRightWheel(&ARightHall, &BRightHall);
+  float rightWheel_filtered = filterRight(rightWheel.velLinear);
+}
