@@ -237,19 +237,8 @@ void robotVelocity2joystick(float velLinear, float velAngular) {
   float velAngularMAX = 2.3;   //1.2   // (rad/s) 1 rad = 60°
   float velAngularMIN = -1.7;  // -1.0
 
-  if (velLinear > velLinearMAX) {
-    velLinear = velLinearMAX;
-  }
-  if (velLinear < velLinearMIN) {
-    velLinear = velLinearMIN;
-  }
-  if (velAngular > velAngularMAX) {
-    velAngular = velAngularMAX;
-  }
-
-  if (velAngular > velAngularMIN) {
-    velAngular = velAngularMIN;
-  }
+  velLinear = constrain(velLinear, velLinearMIN, velLinearMAX);
+  velAngular = constrain(velAngular, velAngularMIN, velAngularMAX);
 
 
   Y_joy = 255 * (velLinear - velLinearMIN) / (velLinearMAX - velLinearMIN);
@@ -257,9 +246,6 @@ void robotVelocity2joystick(float velLinear, float velAngular) {
 
   dacWrite(Xchannel, X_joy);
   dacWrite(Ychannel, Y_joy);
-
-  // Serial.print("X_joy: " + String(X_joy));
-  // Serial.println("      Y_joy: " + String(Y_joy));
 }
 
 
