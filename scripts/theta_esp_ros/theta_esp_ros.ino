@@ -1,3 +1,5 @@
+// Libraries
+
 #include <ros.h>
 #include <geometry_msgs/Twist.h>
 #include <tf/transform_broadcaster.h>
@@ -5,6 +7,9 @@
 
 #include "tf/tf.h"
 #include "tf/tfMessage.h"
+
+
+// ROS comm
 
 ros::NodeHandle nh;
 geometry_msgs::Twist msg;
@@ -19,6 +24,30 @@ ros::Time current_time, last_time;
 double x = 0.0;
 double y = 0.0;
 double th = 0.0;
+
+
+// Variables to get speed and write on joystick
+
+int stoppedTime = 500;      // 1s = 1000
+float radiusWheel = 0.165;  // in meters
+float trackWidth = 0.5;
+static float alpha = 0.0001;               //0.0005     // for filtering
+const unsigned long interval2pub = 100;  // 100 = 0.1s = 100Hz
+unsigned long previousMillis2pub;
+
+int Xchannel = 25;
+int Ychannel = 26;
+int X_joy;
+int Y_joy;
+
+struct wheel {
+  float velLinear;
+};
+
+struct robot {
+  float velLinear;
+  float velAngular;
+};
 
 struct Hall {
   int pin;
@@ -35,30 +64,9 @@ Hall ALeftHall = { 19, true, 0, 0, 0, 0 };   // gray - orange
 Hall BLeftHall = { 21, true, 0, 0, 0, 0 };   // blue - blue
 
 
-// variables - change radius and stoppedTime accordingly
+// interruptions for hall effect sensor
 
-int stoppedTime = 500;      // 1s = 1 000
-float radiusWheel = 0.165;  // in meters
-
-
-struct wheel {
-  float velLinear;
-};
-
-int Xchannel = 25;
-int Ychannel = 26;
-int X_joy;  // = 105;
-int Y_joy;  // = 105;
-
-
-struct robot {
-  float trackWidth = 0.5;
-  float velLinear;
-  float velAngular;
-};
-
-
-void IRAM_ATTR rightMotorISR(Hall* hall) {  // IRAM_ATTR to run on RAM
+void IRAM_ATTR rightMotorISR(Hall* hall) {
 
   ARightHall.timeStart = BRightHall.timeEnd;
   BRightHall.timeEnd = ARightHall.timeEnd;
@@ -76,94 +84,19 @@ void IRAM_ATTR leftMotorISR(Hall* hall) {
   hall->endPulse = !hall->endPulse;
 }
 
-void ros_receiver(const geometry_msgs::Twist& cmd_vel) {
+
+// Receive data speed from ROS and send to ROS
+
+void velROS2Joystick(const geometry_msgs::Twist& cmd_vel) {
   float ros_linear = cmd_vel.linear.x;
   float ros_ang = cmd_vel.angular.z;
 
   robotVelocity2joystick(ros_linear, ros_ang);
 }
 
-ros::Subscriber<geometry_msgs::Twist> sub("/cmd_vel", ros_receiver);
+ros::Subscriber<geometry_msgs::Twist> sub("/cmd_vel", velROS2Joystick);
 
-const unsigned long interval = 100;  // 100 = 100ms = 100Hz
-unsigned long previousMillis;
-
-void setup() {
-  Serial.begin(115200);
-
-  //ros setup:
-  nh.getHardware()->setBaud(115200);
-  nh.initNode();
-  nh.subscribe(sub);
-  nh.advertise(odom_pub);
-
-  pinMode(Xchannel, OUTPUT);
-  pinMode(Ychannel, OUTPUT);
-
-  pinMode(ARightHall.pin, INPUT);
-  pinMode(BRightHall.pin, INPUT);
-  pinMode(ALeftHall.pin, INPUT);
-  pinMode(BLeftHall.pin, INPUT);
-
-  attachInterrupt(
-    digitalPinToInterrupt(ARightHall.pin), [] {
-      rightMotorISR(&ARightHall);
-    },
-    FALLING);
-  attachInterrupt(
-    digitalPinToInterrupt(BRightHall.pin), [] {
-      rightMotorISR(&BRightHall);
-    },
-    FALLING);
-
-  attachInterrupt(
-    digitalPinToInterrupt(ALeftHall.pin), [] {
-      leftMotorISR(&ALeftHall);
-    },
-    FALLING);
-  attachInterrupt(
-    digitalPinToInterrupt(BLeftHall.pin), [] {
-      leftMotorISR(&BLeftHall);
-    },
-    FALLING);
-
-  dacWrite(Xchannel, 130);
-  dacWrite(Ychannel, 130);
-
-  current_time = nh.now();
-  last_time = nh.now();
-
-  wheel leftWheel = speedLeftWheel(&ALeftHall, &BLeftHall);
-  float leftWheel_filtered = filterLeft(leftWheel.velLinear);
-
-  wheel rightWheel = speedRightWheel(&ARightHall, &BRightHall);
-  float rightWheel_filtered = filterRight(rightWheel.velLinear);
-}
-
-void loop() {
-
-  wheel leftWheel = speedLeftWheel(&ALeftHall, &BLeftHall);
-  float leftWheel_filtered = filterLeft(leftWheel.velLinear);
-
-  wheel rightWheel = speedRightWheel(&ARightHall, &BRightHall);
-  float rightWheel_filtered = filterRight(rightWheel.velLinear);
-
-  robot theta = wheelsVelocity2robotVelocity(leftWheel_filtered, rightWheel_filtered);
-
-  // robotVelocity2joystick(contrVelLin, contrVelAng);
-  unsigned long currentMillis = millis();
-  if (currentMillis - previousMillis >= interval) {
-    previousMillis = currentMillis;
-    ros_sender(theta);
-  }
-
-  nh.spinOnce();
-  // writeJoystickManually();
-  // Serial.println("- - - - - - - - - - - - - - - - - - - - - - - - - - - -");
-}
-
-
-void ros_sender(robot theta) {
+void odom2ROS(robot theta) {
   double vth = theta.velAngular;
   double vx = theta.velLinear;
 
@@ -218,13 +151,78 @@ void ros_sender(robot theta) {
   last_time = current_time;
 }
 
+
+void setup() {
+  Serial.begin(115200);
+
+  //ros setup
+  nh.getHardware()->setBaud(115200);
+  nh.initNode();
+  nh.subscribe(sub);
+  nh.advertise(odom_pub);
+  current_time = nh.now();
+  last_time = nh.now();
+
+  pinMode(Xchannel, OUTPUT);
+  pinMode(Ychannel, OUTPUT);
+
+  pinMode(ARightHall.pin, INPUT);
+  pinMode(BRightHall.pin, INPUT);
+  pinMode(ALeftHall.pin, INPUT);
+  pinMode(BLeftHall.pin, INPUT);
+
+  attachInterrupt(
+    digitalPinToInterrupt(ARightHall.pin), [] {
+      rightMotorISR(&ARightHall);
+    },
+    FALLING);
+  attachInterrupt(
+    digitalPinToInterrupt(BRightHall.pin), [] {
+      rightMotorISR(&BRightHall);
+    },
+    FALLING);
+
+  attachInterrupt(
+    digitalPinToInterrupt(ALeftHall.pin), [] {
+      leftMotorISR(&ALeftHall);
+    },
+    FALLING);
+  attachInterrupt(
+    digitalPinToInterrupt(BLeftHall.pin), [] {
+      leftMotorISR(&BLeftHall);
+    },
+    FALLING);
+
+  dacWrite(Xchannel, 130);
+  dacWrite(Ychannel, 130);
+}
+
+void loop() {
+  wheel leftWheel = speedLeftWheel(&ALeftHall, &BLeftHall);
+  float leftWheel_filtered = filterLeft(leftWheel.velLinear);
+
+  wheel rightWheel = speedRightWheel(&ARightHall, &BRightHall);
+  float rightWheel_filtered = filterRight(rightWheel.velLinear);
+
+  robot theta = wheelsVelocity2robotVelocity(leftWheel_filtered, rightWheel_filtered);
+
+  unsigned long currentMillis = millis();
+  if (currentMillis - previousMillis2pub >= interval2pub) {
+    previousMillis2pub = currentMillis;
+    odom2ROS(theta);
+  }
+
+  nh.spinOnce();
+}
+
+
 robot wheelsVelocity2robotVelocity(float leftWheel_velLinear, float rightWheel_velLinear) {
   // https://www.roboticsbook.org/S52_diffdrive_actions.html
 
   robot localRobot;
 
   localRobot.velLinear = (rightWheel_velLinear + leftWheel_velLinear) / 2;
-  localRobot.velAngular = (rightWheel_velLinear - leftWheel_velLinear) / localRobot.trackWidth;
+  localRobot.velAngular = (rightWheel_velLinear - leftWheel_velLinear) / trackWidth;
   // velAngular is negative clockwise on ROS
 
   return localRobot;
@@ -234,12 +232,11 @@ void robotVelocity2joystick(float velLinear, float velAngular) {
   float velLinearMAX = 0.6;   // (m/s) going forward
   float velLinearMIN = -0.7;  // (m/s) going reverse
 
-  float velAngularMAX = 2.3;   //1.2   // (rad/s) 1 rad = 60°
-  float velAngularMIN = -1.7;  // -1.0
+  float velAngularMAX = 2.3;  // (rad/s) 1 rad = 60°
+  float velAngularMIN = -1.7;
 
   velLinear = constrain(velLinear, velLinearMIN, velLinearMAX);
   velAngular = constrain(velAngular, velAngularMIN, velAngularMAX);
-
 
   Y_joy = 255 * (velLinear - velLinearMIN) / (velLinearMAX - velLinearMIN);
   X_joy = 255 * (velAngular - velAngularMIN) / (velAngularMAX - velAngularMIN);
@@ -251,7 +248,7 @@ void robotVelocity2joystick(float velLinear, float velAngular) {
 
 wheel speedLeftWheel(Hall* Ahall, Hall* Bhall) {
   static wheel localWheel;
-  Ahall->currentTime = xTaskGetTickCount();  // micros();
+  Ahall->currentTime = xTaskGetTickCount();
 
   // If the wheels have stopped for stoppedTime, reset hall values
   if (Ahall->currentTime - Ahall->previousTime >= stoppedTime) {
@@ -288,9 +285,8 @@ wheel speedLeftWheel(Hall* Ahall, Hall* Bhall) {
 
 wheel speedRightWheel(Hall* Ahall, Hall* Bhall) {
   static wheel localWheel;
-  Ahall->currentTime = xTaskGetTickCount();  // micros();
+  Ahall->currentTime = xTaskGetTickCount();
 
-  // If the wheels have stopped for stoppedTime, reset hall values
   if (Ahall->currentTime - Ahall->previousTime >= stoppedTime) {
 
     Ahall->endPulse = true;
@@ -302,19 +298,17 @@ wheel speedRightWheel(Hall* Ahall, Hall* Bhall) {
     localWheel.velLinear = 0;
   }
 
-  // If there is a complete wheel turn from A Hall sensor
   if (Ahall->timeStart && Ahall->endPulse) {
-    int deltaTime = (Ahall->timeEnd - Ahall->timeStart);  // in miliseconds
-    float freq = 1 / (deltaTime / 1000.0);                // divide by float to save whole number
+    int deltaTime = (Ahall->timeEnd - Ahall->timeStart);
+    float freq = 1 / (deltaTime / 1000.0);
     float rpmWheel = freq * (60 / 32.0);
-    float angularFrequency = ((rpmWheel * (2 * PI / 60.0)));  // (rad/s)
-    localWheel.velLinear = angularFrequency * radiusWheel;    // (m/s)
+    float angularFrequency = ((rpmWheel * (2 * PI / 60.0)));
+    localWheel.velLinear = angularFrequency * radiusWheel;
 
     if ((Ahall->timeEnd - Bhall->timeEnd) > (Bhall->timeEnd - Ahall->timeStart)) {
       localWheel.velLinear = localWheel.velLinear * (-1);
     }
 
-    // Reset the Hall sensor values and update the previousTime variable
     Ahall->timeStart = 0;
     Bhall->timeEnd = 0;
     Ahall->timeEnd = 0;
@@ -324,22 +318,32 @@ wheel speedRightWheel(Hall* Ahall, Hall* Bhall) {
   return localWheel;
 }
 
-float filterLeft(float speed_measured) {  // iir filter aka EMA filter
-                                          //https://blog.stratifylabs.dev/device/2013-10-04-An-Easy-to-Use-Digital-Filter/
-  static float alpha = 0.0005;            //0.5            // low number for a low pass filter
-  static float filteredValue = 0.0;
+float filterLeft(float speed_measured) {
+  // iir filter aka EMA filter
+  //https://blog.stratifylabs.dev/device/2013-10-04-An-Easy-to-Use-Digital-Filter/
+  // low number for a low pass filter
+  static float filteredValue;
+
+  // if (speed_measured > 1.0 || speed_measured < -1.0 || (speed_measured > 0.1 && filteredValue < 0.1) || (speed_measured < -0.1 && filteredValue > 0.1)) {
+  //   return filteredValue;
+  // }
 
   if (filteredValue == 0.0) {
     filteredValue = speed_measured;
   } else {
     filteredValue = alpha * speed_measured + (1 - alpha) * filteredValue;
   }
+ 
   return filteredValue;
 }
 
 float filterRight(float speed_measured) {
-  static float alpha = 0.0005;
-  static float filteredValue = 0.0;
+  static float filteredValue;
+
+  // if (speed_measured > 1.0 || speed_measured < -1.0 || (speed_measured > 0.1 && filteredValue < 0.1) || (speed_measured < -0.1 && filteredValue > 0.1)) {
+  //   return filteredValue;
+  // }
+
 
   if (filteredValue == 0.0) {
     filteredValue = speed_measured;
