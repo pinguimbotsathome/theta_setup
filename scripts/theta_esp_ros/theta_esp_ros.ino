@@ -31,8 +31,8 @@ double th = 0.0;
 int stoppedTime = 500;      // 1s = 1000
 float radiusWheel = 0.165;  // in meters
 float trackWidth = 0.5;
-static float alpha = 0.0001;               //0.0005     // for filtering
-const unsigned long interval2pub = 100;  // 100 = 0.1s = 100Hz
+static float alpha = 0.005;               //0.0005     // for filtering
+const unsigned long interval2pub = 100;  // 100 = 0.01s = 100Hz
 unsigned long previousMillis2pub;
 
 int Xchannel = 25;
@@ -324,9 +324,9 @@ float filterLeft(float speed_measured) {
   // low number for a low pass filter
   static float filteredValue;
 
-  // if (speed_measured > 1.0 || speed_measured < -1.0 || (speed_measured > 0.1 && filteredValue < 0.1) || (speed_measured < -0.1 && filteredValue > 0.1)) {
-  //   return filteredValue;
-  // }
+  if (speed_measured > 1.0 || speed_measured < -1.0) {
+    return filteredValue;
+  }
 
   if (filteredValue == 0.0) {
     filteredValue = speed_measured;
@@ -340,9 +340,9 @@ float filterLeft(float speed_measured) {
 float filterRight(float speed_measured) {
   static float filteredValue;
 
-  // if (speed_measured > 1.0 || speed_measured < -1.0 || (speed_measured > 0.1 && filteredValue < 0.1) || (speed_measured < -0.1 && filteredValue > 0.1)) {
-  //   return filteredValue;
-  // }
+  if (speed_measured > 1.0 || speed_measured < -1.0) {
+    return filteredValue;
+  }
 
 
   if (filteredValue == 0.0) {
