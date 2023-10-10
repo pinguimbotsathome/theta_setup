@@ -4,6 +4,7 @@
 #include <geometry_msgs/Twist.h>
 #include <tf/transform_broadcaster.h>
 #include <nav_msgs/Odometry.h>
+#include <geometry_msgs/PoseStamped.h>
 
 #include "tf/tf.h"
 #include "tf/tfMessage.h"
@@ -31,7 +32,7 @@ double th = 0.0;
 int stoppedTime = 500;      // 1s = 1000
 float radiusWheel = 0.165;  // in meters
 float trackWidth = 0.5;
-static float alpha = 0.005;               //0.0005     // for filtering
+static float alpha = 0.0005;             //0.0005     // for filtering
 const unsigned long interval2pub = 100;  // 100 = 0.01s = 100Hz
 unsigned long previousMillis2pub;
 
@@ -39,6 +40,13 @@ int Xchannel = 25;
 int Ychannel = 26;
 int X_joy;
 int Y_joy;
+
+
+//variables to get points from rviz
+double initial_pose_x = 0;
+double initial_pose_y = 0;
+double initial_orientation_z = 0;
+bool flagPoseReceived = false;
 
 struct wheel {
   float velLinear;
@@ -84,6 +92,15 @@ void IRAM_ATTR leftMotorISR(Hall* hall) {
   hall->endPulse = !hall->endPulse;
 }
 
+// Get initial_2d message from either Rviz clicks or a manual pose publisher
+void set_initial_2d(const geometry_msgs::PoseStamped& rvizClick) {
+
+  initial_pose_x = rvizClick.pose.position.x;
+  initial_pose_y = rvizClick.pose.position.y;
+  initial_orientation_z = rvizClick.pose.orientation.z;
+  flagPoseReceived = true;
+}
+ros::Subscriber<geometry_msgs::PoseStamped> sub_initial_pose("/initial_2d", set_initial_2d);
 
 // Receive data speed from ROS and send to ROS
 
@@ -113,18 +130,45 @@ void odom2ROS(robot theta) {
   th += delta_th;
 
   // //since all odometry is 6DOF we'll need a quaternion created from yaw
-  geometry_msgs::Quaternion odom_quat = tf::createQuaternionFromYaw(th);
+  geometry_msgs::Quaternion odom_quat;//= tf::createQuaternionFromYaw(th);
+  
+  //set the position
+  if (flagPoseReceived) {
+    odom.pose.pose.position.x = initial_pose_x;
+    odom.pose.pose.position.y = initial_pose_y;
+    odom.pose.pose.position.z = 0.0;
+    odom.pose.pose.orientation.z = initial_orientation_z;
+
+    flagPoseReceived = false;
+
+    x = initial_pose_x;
+    y = initial_pose_y;
+    th = initial_orientation_z;
+
+  } else {
+    x += delta_x;
+    y += delta_y;
+    th += delta_th;
+    odom_quat = tf::createQuaternionFromYaw(th);
+    
+    odom.pose.pose.position.x = x;
+    odom.pose.pose.position.y = y;
+    odom.pose.pose.position.z = 0.0;
+    odom.pose.pose.orientation = odom_quat;
+  }
 
   // //first, we'll publish the transform over tf
-  geometry_msgs::TransformStamped odom_trans;
-  odom_trans.header.stamp = current_time;
-  odom_trans.header.frame_id = "odom";
-  // odom_trans.child_frame_id = "base_link";
+  // geometry_msgs::TransformStamped odom_trans;
+  // odom_trans.header.stamp = current_time;
+  // odom_trans.header.frame_id = "odom";
+  // odom_trans.child_frame_id = "base_footprint";
 
-  odom_trans.transform.translation.x = x;
-  odom_trans.transform.translation.y = y;
-  odom_trans.transform.translation.z = 0.0;
-  odom_trans.transform.rotation = odom_quat;
+
+  // odom_trans.transform.translation.x = x;
+  // odom_trans.transform.translation.y = y;
+  // odom_trans.transform.translation.z = 0.0;
+  // odom_trans.transform.rotation = odom_quat;
+
 
   // //send the transform
   // odom_broadcaster.sendTransform(odom_trans);
@@ -132,21 +176,42 @@ void odom2ROS(robot theta) {
   //next, we'll publish the odometry message over ROS
   odom.header.stamp = current_time;
   odom.header.frame_id = "odom";
-
-  //set the position
-  odom.pose.pose.position.x = x;
-  odom.pose.pose.position.y = y;
-  odom.pose.pose.position.z = 0.0;
-  odom.pose.pose.orientation = odom_quat;
-
-  //set the velocity
   odom.child_frame_id = "base_link";
+  
+  //set the velocity
   odom.twist.twist.linear.x = vx;
   odom.twist.twist.angular.z = vth;
 
+  float covariance[36] = { 0.1, 0.0, 0.0, 0.0, 0.0, 0.0,
+                           0.0, 0.1, 0.0, 0.0, 0.0, 0.0,
+                           0.0, 0.0, 0.1, 0.0, 0.0, 0.0,
+                           0.0, 0.0, 0.0, 0.1, 0.0, 0.0,
+                           0.0, 0.0, 0.0, 0.0, 0.1, 0.0,
+                           0.0, 0.0, 0.0, 0.0, 0.0, 0.1 };
+
+  // odom.pose.covariance = {0.1,0.0,0.0,0.0,0.0,0.0,
+  //                         0.0,0.1,0.0,0.0,0.0,0.0,
+  //                         0.0,0.0,0.1,0.0,0.0,0.0,
+  //                         0.0,0.0,0.0,0.1,0.0,0.0,
+  //                         0.0,0.0,0.0,0.0,0.1,0.0,
+  //                         0.0,0.0,0.0,0.0,0.0,0.1};
+
+  // odom.twist.covariance = {0.1,0.0,0.0,0.0,0.0,0.0,
+  //                         0.0,0.1,0.0,0.0,0.0,0.0,
+  //                         0.0,0.0,0.1,0.0,0.0,0.0,
+  //                         0.0,0.0,0.0,0.1,0.0,0.0,
+  //                         0.0,0.0,0.0,0.0,0.1,0.0,
+  //                         0.0,0.0,0.0,0.0,0.0,0.1};
+  int i = 0;
+  for (i = 0; i < 36; i++) {
+    odom.twist.covariance[i] = covariance[i];
+    odom.pose.covariance[i] = covariance[i];
+  }
+
+
   //publish the message
   odom_pub.publish(&odom);
-  // nh.spinOnce();
+  nh.spinOnce();
 
   last_time = current_time;
 }
@@ -333,7 +398,7 @@ float filterLeft(float speed_measured) {
   } else {
     filteredValue = alpha * speed_measured + (1 - alpha) * filteredValue;
   }
- 
+
   return filteredValue;
 }
 
