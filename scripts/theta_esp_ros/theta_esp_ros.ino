@@ -5,6 +5,7 @@
 #include <tf/transform_broadcaster.h>
 #include <nav_msgs/Odometry.h>
 #include <geometry_msgs/PoseStamped.h>
+#include <geometry_msgs/Quaternion.h>
 
 #include "tf/tf.h"
 #include "tf/tfMessage.h"
@@ -32,8 +33,8 @@ double th = 0.0;
 int stoppedTime = 500;      // 1s = 1000
 float radiusWheel = 0.165;  // in meters
 float trackWidth = 0.5;
-static float alpha = 0.0005;             //0.0005     // for filtering
-const unsigned long interval2pub = 100;  // 100 = 0.01s = 100Hz
+static float alpha = 0.05;             //0.0005     // for filtering
+const unsigned long interval2pub = 0.5;  // 100 = 0.01s = 100Hz
 unsigned long previousMillis2pub;
 
 int Xchannel = 25;
@@ -99,6 +100,8 @@ void set_initial_2d(const geometry_msgs::PoseStamped& rvizClick) {
   initial_pose_y = rvizClick.pose.position.y;
   initial_orientation_z = rvizClick.pose.orientation.z;
   flagPoseReceived = true;
+
+  // nh.logwarn("set_initial_2d");
 }
 ros::Subscriber<geometry_msgs::PoseStamped> sub_initial_pose("/initial_2d", set_initial_2d);
 
@@ -114,6 +117,9 @@ void velROS2Joystick(const geometry_msgs::Twist& cmd_vel) {
 ros::Subscriber<geometry_msgs::Twist> sub("/cmd_vel", velROS2Joystick);
 
 void odom2ROS(robot theta) {
+  // nh.logwarn("odom2ros");
+  
+  
   double vth = theta.velAngular;
   double vx = theta.velLinear;
 
@@ -145,12 +151,15 @@ void odom2ROS(robot theta) {
     y = initial_pose_y;
     th = initial_orientation_z;
 
+    // nh.logwarn("flag true");
+
+
   } else {
     x += delta_x;
     y += delta_y;
     th += delta_th;
-    odom_quat = tf::createQuaternionFromYaw(th);
-    
+    odom_quat = tf::createQuaternionFromYaw(th); 
+
     odom.pose.pose.position.x = x;
     odom.pose.pose.position.y = y;
     odom.pose.pose.position.z = 0.0;
@@ -182,26 +191,12 @@ void odom2ROS(robot theta) {
   odom.twist.twist.linear.x = vx;
   odom.twist.twist.angular.z = vth;
 
-  float covariance[36] = { 0.1, 0.0, 0.0, 0.0, 0.0, 0.0,
-                           0.0, 0.1, 0.0, 0.0, 0.0, 0.0,
-                           0.0, 0.0, 0.1, 0.0, 0.0, 0.0,
-                           0.0, 0.0, 0.0, 0.1, 0.0, 0.0,
-                           0.0, 0.0, 0.0, 0.0, 0.1, 0.0,
-                           0.0, 0.0, 0.0, 0.0, 0.0, 0.1 };
-
-  // odom.pose.covariance = {0.1,0.0,0.0,0.0,0.0,0.0,
-  //                         0.0,0.1,0.0,0.0,0.0,0.0,
-  //                         0.0,0.0,0.1,0.0,0.0,0.0,
-  //                         0.0,0.0,0.0,0.1,0.0,0.0,
-  //                         0.0,0.0,0.0,0.0,0.1,0.0,
-  //                         0.0,0.0,0.0,0.0,0.0,0.1};
-
-  // odom.twist.covariance = {0.1,0.0,0.0,0.0,0.0,0.0,
-  //                         0.0,0.1,0.0,0.0,0.0,0.0,
-  //                         0.0,0.0,0.1,0.0,0.0,0.0,
-  //                         0.0,0.0,0.0,0.1,0.0,0.0,
-  //                         0.0,0.0,0.0,0.0,0.1,0.0,
-  //                         0.0,0.0,0.0,0.0,0.0,0.1};
+  float covariance[36] = { 0.01, 0.0, 0.0, 0.0, 0.0, 0.0,
+                           0.0, 0.01, 0.0, 0.0, 0.0, 0.0,
+                           0.0, 0.0, 0.01, 0.0, 0.0, 0.0,
+                           0.0, 0.0, 0.0, 0.01, 0.0, 0.0,
+                           0.0, 0.0, 0.0, 0.0, 0.01, 0.0,
+                           0.0, 0.0, 0.0, 0.0, 0.0, 0.01 };
   int i = 0;
   for (i = 0; i < 36; i++) {
     odom.twist.covariance[i] = covariance[i];
@@ -224,6 +219,7 @@ void setup() {
   nh.getHardware()->setBaud(115200);
   nh.initNode();
   nh.subscribe(sub);
+  nh.subscribe(sub_initial_pose);
   nh.advertise(odom_pub);
   current_time = nh.now();
   last_time = nh.now();
@@ -276,7 +272,6 @@ void loop() {
     previousMillis2pub = currentMillis;
     odom2ROS(theta);
   }
-
   nh.spinOnce();
 }
 
@@ -297,8 +292,8 @@ void robotVelocity2joystick(float velLinear, float velAngular) {
   float velLinearMAX = 0.6;   // (m/s) going forward
   float velLinearMIN = -0.7;  // (m/s) going reverse
 
-  float velAngularMAX = 2.3;  // (rad/s) 1 rad = 60°
-  float velAngularMIN = -1.7;
+  float velAngularMAX = 4.6;  //  2.3  (rad/s) 1 rad = 60°
+  float velAngularMIN = -3.4; // -1.7
 
   velLinear = constrain(velLinear, velLinearMIN, velLinearMAX);
   velAngular = constrain(velAngular, velAngularMIN, velAngularMAX);
