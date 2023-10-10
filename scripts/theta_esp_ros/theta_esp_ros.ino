@@ -6,6 +6,7 @@
 #include <nav_msgs/Odometry.h>
 #include <geometry_msgs/PoseStamped.h>
 #include <geometry_msgs/Quaternion.h>
+#include <std_msgs/Empty.h>
 
 #include "tf/tf.h"
 #include "tf/tfMessage.h"
@@ -116,6 +117,14 @@ void velROS2Joystick(const geometry_msgs::Twist& cmd_vel) {
 
 ros::Subscriber<geometry_msgs::Twist> sub("/cmd_vel", velROS2Joystick);
 
+void reset_esp_vars(const std_msgs::Empty& empty) {
+  double x = 0.0;
+  double y = 0.0;
+  double th = 0.0;
+}
+
+ros::Subscriber<std_msgs::Empty> sub_reset("/reset_esp", reset_esp_vars);
+
 void odom2ROS(robot theta) {
   // nh.logwarn("odom2ros");
   
@@ -219,6 +228,7 @@ void setup() {
   nh.getHardware()->setBaud(115200);
   nh.initNode();
   nh.subscribe(sub);
+  nh.subscribe(sub_initial_pose);
   nh.subscribe(sub_initial_pose);
   nh.advertise(odom_pub);
   current_time = nh.now();
